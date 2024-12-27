@@ -2,103 +2,105 @@ const User = require('../Models/User');
 const RefreshToken = require('../Models/RefreshToken');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { successResponse, errorResponse } = require('../Config/response');
+const { Op } = require('sequelize');
+const userSchema = require('../ValidationSchemas/userSchema');
 
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOCK_TIME = 30 * 60 * 1000; // 30 minutes
 
-const generateAccessToken = (user) => {
-  return jwt.sign({ id: user.id, userType: user.userType }, process.env.JWT_SECRET, { expiresIn: '15h' });
-};
-
-const generateRefreshToken = async (user) => {
-  const token = jwt.sign({ id: user.id }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '1d' });
-  const expiryDate = new Date();
-  expiryDate.setDate(expiryDate.getDate() + 7);
-
-  await RefreshToken.create({ token, userId: user.id, expiryDate });
-  return token;
-};
-
-exports.register = async (req, res) => {
+exports.addUser = async (req, res) => {
   try {
-    const { email, password, userType } = req.body;
+    
+
+    const { error } = userSchema.validate(req.body, { abortEarly: false }); // Validate all fields
+    if (error) {
+        const formattedErrors = formatValidationErrors(error.details);
+        return errorResponse(res, 'VALIDATION_ERROR', 400,{ errors: formattedErrors });
+        //return res.status(400).json();
+    }
+  const { email, password, userType } = req.body;
     // Check if email already exists
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ message: 'Email already in use' });
+      return errorResponse(res, 'Email already in use', 400);
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({ email, password: hashedPassword, userType });
-    res.status(201).json({ message: 'User registered successfully' });
+    successResponse(res, "User registered successfully", { user }, 201);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
-      return res.status(400).json({ message: 'Email already in use' });
+      return errorResponse(res, 'Email already in use', 400, { error: error.message });
     }
-    res.status(400).json({ error: error.message });
+    errorResponse(res, 'Internal server error', 400, { error: error.message });
   }
 };
 
-exports.login = async (req, res) => {
+exports.listUsers = async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ where: { email } });
+    // Parse query parameters with defaults
+    const { page = 1, limit = 10, search = '' } = req.query;
 
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
+    // Ensure `page` is at least 1
+    const currentPage = Math.max(parseInt(page), 1); // Ensures page >= 1
+    const currentLimit = parseInt(limit);
 
-    if (user.lockUntil && user.lockUntil > Date.now()) {
-      return res.status(423).json({ message: 'Account is locked. Try again later.' });
-    }
+    const offset = (currentPage - 1) * currentLimit;
 
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
-      user.loginAttempts += 1;
-      if (user.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
-        user.lockUntil = new Date(Date.now() + LOCK_TIME);
+    // Add search conditions
+    const where = search
+      ? {
+        [Op.or]: [
+          { email: { [Op.like]: `%${search}%` } },
+          { userType: { [Op.like]: `%${search}%` } },
+        ],
       }
-      await user.save();
-      return res.status(401).json({ message: 'Invalid email or password' });
-    }
+      : {};
 
-    user.loginAttempts = 0;
-    user.lockUntil = null;
-    await user.save();
+    // Fetch paginated data
+    const { count, rows } = await User.findAndCountAll({
+      where,
+      attributes: { exclude: ['password'] }, // Exclude the password field
+      limit: currentLimit,
+      offset,
+      order: [['createdAt', 'DESC']],
+    });
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = await generateRefreshToken(user);
-    res.json({ accessToken, refreshToken });
-
+    // Send response
+    
+    res.json({
+      totalItems: count,
+      totalPages: Math.ceil(count / currentLimit),
+      currentPage,
+      data: rows,
+    });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    return errorResponse(res,'',500,{ error: error.message }); 
   }
 };
 
-exports.refreshToken = async (req, res) => {
-  const { token } = req.body;
-  //check token in the request
-  if (!token) {
-    return res.status(403).json({ message: 'Refresh token is required' });
-  }
+exports.updateUser = async (req, res) => {
   try {
-    const refreshToken = await RefreshToken.findOne({ where: { token } });
+    const { id } = req.params;
+    const { email, password, userType } = req.body;
 
-    if (!refreshToken) {
-      return res.status(403).json({ message: 'Refresh token is not in database' });
+    // Check if URL already exists for another menu
+    const existingEmail = await User.findOne({ where: { email, id: { [Op.ne]: id } } });
+    if (existingEmail) {
+      return errorResponse(res,'Email already in use',400,{ message: 'Email already in use' }); 
     }
 
-    if (refreshToken.expiryDate < new Date()) {
-      await RefreshToken.destroy({ where: { id: refreshToken.id } });
-      return res.status(403).json({ message: 'Refresh token has expired. Please login again' });
+    const User = await User.findByPk(id);
+    if (!User) {
+      return errorResponse(res,'User not found',404,{ message: 'User not found' }); 
     }
+    const hashedPassword = await bcrypt.hash(password, 10);
+    User.email = email;
+    User.password = hashedPassword;
+    User.userType = userType;
 
-    const user = await User.findByPk(refreshToken.userId);
-    const newAccessToken = generateAccessToken(user);
-
-    res.json({ accessToken: newAccessToken });
+    await User.save();
+    successResponse(res, "User updated successfully", { menu }, 200); 
   } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
+    return errorResponse(res,'',400,{ error: error.message }); 
   }
-};
+}; 

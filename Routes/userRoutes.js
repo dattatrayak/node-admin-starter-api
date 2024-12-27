@@ -1,32 +1,31 @@
 const express = require('express');
-const { register, login } = require('../Controller/UserController');
-const { check, validationResult } = require('express-validator');
+const {  validationResult } = require('express-validator');
+const { authenticateToken, authorizeRoles } = require('../Middleware/authMiddleware');
+const { listUsers, addUser, updateUser } = require('../Controller/UserController');
+const userSchema = require('../ValidationSchemas/userSchema');
+const { formatValidationErrors } = require('../Helper/validation');
+const { errorResponse } = require('../Config/response');
 const router = express.Router();
+ 
+router.get('/', authenticateToken, authorizeRoles('superadmin', 'webadmin', 'admin'), listUsers);
 
-const signupValidation = [
-  check('email', 'Please include a valid email').isEmail(),
-  check('password', 'Password must be 6 or more characters').isLength({ min: 6 })
-];
 
-const loginValidation = [
-  check('email', 'Please include a valid email').isEmail(),
-  check('password', 'Password must be 6 or more characters').isLength({ min: 6 })
-];
+router.post('/', authenticateToken,authorizeRoles('superadmin', 'webadmin', 'admin'), (req, res, next) => {
+    const { error } = userSchema.validate(req.body, { abortEarly: false }); // Validate all fields
+    if (error) {
+        const formattedErrors = formatValidationErrors(error.details);
+        return errorResponse(res, 'VALIDATION_ERROR', 422,{ errors: formattedErrors }); 
+    }
 
-router.post('/register', signupValidation, (req, res, next) => {
+  addUser(req, res, next);
+});
+router.put('/:id', authenticateToken, authorizeRoles('superadmin', 'webadmin', 'admin'), (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
+      return res.status(400).json({ errors: errors.array() });
   }
-  register(req, res, next);
+  updateUser(req, res, next);
 });
 
-router.post('/login', loginValidation, (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-  login(req, res, next);
-});
 
 module.exports = router;

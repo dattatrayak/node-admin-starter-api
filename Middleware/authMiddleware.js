@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../Models/User');
-
+const { successResponse, errorResponse } = require('../Config/response');
 const authenticateToken = (req, res, next) => {
   const token = req.header('Authorization')?.split(' ')[1];
   if (!token) return res.status(401).json({ message: 'Access denied. No token provided.' });
@@ -9,8 +9,14 @@ const authenticateToken = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
-  } catch (error) {
-    res.status(400).json({ message: 'Invalid token.' });
+  } catch (error) { 
+    if (error.name === 'TokenExpiredError') {
+      return errorResponse(res, 'Token has expired', 401);
+    }
+    if (error.name === 'JsonWebTokenError') {
+      return errorResponse(res, 'Invalid token', 401);
+    }
+    return errorResponse(res, 'Authentication failed', 500);
   }
 };
 
@@ -18,14 +24,14 @@ const authorizeRoles = (...roles) => {
   return async (req, res, next) => {
     try {
       const user = await User.findByPk(req.user.id);
-      if (!user || !roles.includes(user.userType)) {
-        return res.status(403).json({ message: 'Access denied. Insufficient permissions.' });
+      if (!user || !roles.includes(user.userType)) { 
+        return errorResponse(res, 'Access denied. Insufficient permissions.', 403); 
       }
       next();
     } catch (error) {
-      res.status(500).json({ message: 'Internal server error.' });
+        errorResponse(res, 'Internal server error.', 500); 
     }
   };
 };
- 
+
 module.exports = { authenticateToken, authorizeRoles };

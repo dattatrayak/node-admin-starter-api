@@ -12,7 +12,8 @@ const User = sequelize.define('User', {
   },
   password: {
     type: DataTypes.STRING,
-    allowNull: false
+    allowNull: false,
+    select: false 
   },
   userType: {
     type: DataTypes.ENUM('superadmin', 'webadmin', 'admin'),

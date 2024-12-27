@@ -61,34 +61,45 @@ exports.menuChildParent = async (req, res) => {
 };
   
 exports.listMenus = async (req, res) => {
-    try {
-      const { page = 1, limit = 10, search = '' } = req.query;
-      const offset = (page - 1) * limit;
-  
-      const where = search ? {
-        [Op.or]: [
-          { name: { [Op.like]: `%${search}%` } },
-          { heading: { [Op.like]: `%${search}%` } }
-        ]
-      } : {};
-  
-      const { count, rows } = await AdminMenu.findAndCountAll({
-        where,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        order: [['order', 'ASC']]
-      });
-  
-      res.json({
-        totalItems: count,
-        totalPages: Math.ceil(count / limit),
-        currentPage: parseInt(page),
-        menus: rows
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  };
+  try {
+    // Parse query parameters with defaults
+    const { page = 1, limit = 10, search = '' } = req.query;
+
+    // Ensure `page` is at least 1
+    const currentPage = Math.max(parseInt(page), 1); // Ensures page >= 1
+    const currentLimit = parseInt(limit);
+
+    const offset = (currentPage - 1) * currentLimit;
+
+    // Add search conditions
+    const where = search
+      ? {
+          [Op.or]: [
+            { name: { [Op.like]: `%${search}%` } },
+            { heading: { [Op.like]: `%${search}%` } },
+          ],
+        }
+      : {};
+
+    // Fetch paginated data
+    const { count, rows } = await AdminMenu.findAndCountAll({
+      where,
+      limit: currentLimit,
+      offset,
+      order: [['order', 'ASC']],
+    });
+
+    // Send response
+    res.json({
+      totalItems: count,
+      totalPages: Math.ceil(count / currentLimit),
+      currentPage,
+      menus: rows,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
 
   exports.updateMenu = async (req, res) => {
     try {
@@ -108,7 +119,7 @@ exports.listMenus = async (req, res) => {
   
       menu.name = name;
       menu.heading = heading;
-      menu.url = url;
+     // menu.url = url;
       menu.icon = icon;
       menu.parent_id = parent_id;
       menu.order = order;
@@ -119,4 +130,52 @@ exports.listMenus = async (req, res) => {
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
-  };
+  }; 
+
+exports.getBreadcrumbs = async (req, res) => {
+  try {
+    const { url } = req.body; 
+    const breadcrumbs = []; 
+    let currentMenu = await AdminMenu.findOne({ where: { url } }); 
+    if (!currentMenu) {
+        throw new Error('Menu not found');
+    }
+
+    while (currentMenu) {
+        breadcrumbs.unshift({ name: currentMenu.name, url: currentMenu.url });
+        currentMenu = await AdminMenu.findOne({ where: { id: currentMenu.parent_id } });
+    }
+     res.status(201).json({ data: breadcrumbs });
+    return ;
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+ };
+
+ const getDropdownMenus = async (parentId = null) => {
+  const menus = await AdminMenu.findAll({
+      where: { parent_id: parentId },
+      order: [['order', 'ASC']],
+  });
+
+  const formattedMenus = [];
+  for (const menu of menus) {
+      const children = await getDropdownMenus(menu.id); // Recursively fetch children
+      formattedMenus.push({
+          id: menu.id,
+          name: menu.name,
+          children,
+      });
+  }
+  return formattedMenus;
+};
+
+exports.menuChildParentDropdown = async (req, res) => {
+  try {
+    const menus = await getDropdownMenus();
+    res.status(201).json({ data: menus });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+

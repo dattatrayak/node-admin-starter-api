@@ -11,9 +11,8 @@ app.use(cors());
 
 dotenv.config();
 const sequelize = require('./Config/db');
-const userRoutes = require('./Routes/userRoutes');
+ const userRoutes = require('./Routes/userRoutes');
 const adminRoutes = require('./Routes/adminRoutes'); 
-
 // Sync database
 sequelize.sync()
   .then(() => console.log('Database synced'))
@@ -24,9 +23,9 @@ app.get('/',(req,res)=>{
 });
 
 // Routes
-app.use('/api/users', userRoutes);
+//app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
-
+app.use('/api/admin/users', userRoutes);
 // Error handling middleware
 app.use((err, req, res, next) => {
     err.statusCode = err.statusCode || 500;
